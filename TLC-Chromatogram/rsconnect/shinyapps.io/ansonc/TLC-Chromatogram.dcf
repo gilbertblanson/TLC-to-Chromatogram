@@ -1,0 +1,12 @@
+name: TLC-Chromatogram
+title: TLC-Chromatogram
+username: ansonc
+account: ansonc
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 11813460
+bundleId: 8517583
+url: https://ansonc.shinyapps.io/TLC-Chromatogram/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE
