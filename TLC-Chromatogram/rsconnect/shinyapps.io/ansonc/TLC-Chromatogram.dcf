@@ -5,7 +5,7 @@ account: ansonc
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 11813460
-bundleId: 8533762
+bundleId: 8538201
 url: https://ansonc.shinyapps.io/TLC-Chromatogram/
 version: 1
 asMultiple: FALSE
