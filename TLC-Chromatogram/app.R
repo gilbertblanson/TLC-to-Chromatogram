@@ -1,9 +1,11 @@
 library(shiny)
 library(bslib)
+library(bsicons)
 library(rhandsontable)
 library(DT)
 library(tidyverse)
 library(ggplot2)
+library(plotly)
 
 
 ##FUNCTIONS-------------
@@ -53,8 +55,17 @@ ui <- fluidPage(
     # Content
     layout_columns(
       # Chromatogram
-      card(card_header(h4("Chromatogram")),
-           plotOutput(outputId = "chromatogram")),
+      card(card_header("Chromatogram",
+                       popover(
+                         #Plot settings go here!
+                         title = "Plot settings",
+                         bs_icon("gear"),
+                         radioButtons("xaxis", "X axis:", choices = c("mL Eluent" = "ml", "Fractions" = "frac", "Column Volumes" = "cv"), selected = "ml"),
+                         radioButtons("frac_lines", "Show fraction lines:", choices = c("Yes" = "y", "No" = "n"), selected = "n")
+                         ),
+                       class = "d-flex justify-content-between"),
+           plotlyOutput(outputId = "chromatogram")
+           ),
       
       # Other information card
       navset_card_underline(
@@ -86,7 +97,7 @@ ui <- fluidPage(
       
       # Optional Settings
       card(
-        card_header(h4("Optional Settings")),
+        card_header("Optional Settings"),
         p(
           "Change the values below if you wish to set your own column size or fraction size. Otherwise, set to 0."
         ),
@@ -96,7 +107,11 @@ ui <- fluidPage(
         verbatimTextOutput("fraction_size")
       ),
       col_widths = c(8, 4, 8, 4)
-    )
+    ),
+    tags$div("This Shiny app is based off the work of J. D. Fair and C. M. Kormos, Journal of Chromatography A, 2008, 1211, 49–54.",tags$br(),
+             "Rf prediction algorithm is based off of P. Kręcisz, K. Czarnecka and P. Szymański, Journal of Chromatographic Science, 2022, 60, 472–477.",
+               style = "font-size:10px;")
+    
   )
 )
 
@@ -203,7 +218,7 @@ server <- function(input, output, session) {
     tlc + scale_colour_brewer(palette = "Set1")
   })
   
-  output$chromatogram <- renderPlot({
+  output$chromatogram <- renderPlotly({
     if (!is.null(rv$tlc_data$bandsize)){
       # Generate list of functions to plot with all but x already applied
       partials_list <- mapply(FUN=partial,
@@ -222,8 +237,8 @@ server <- function(input, output, session) {
       comb_plot <- reduce(.x = seq_along(partials_list),
                           .f = function(p, i) line_layer_add(p, partials_list[[i]], paste0("Spot ", i)),
                           .init = init_plot)
-      comb_plot +
-        labs( x = "Eluent (mL)", y = "Relative peak intensity")
+      ggplotly(comb_plot + labs( x = "Eluent (mL)", y = "Relative peak intensity", colour = "")
+        )
     }
   })
   
