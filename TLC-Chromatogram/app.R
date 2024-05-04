@@ -5,7 +5,10 @@ library(rhandsontable)
 library(DT)
 library(tidyverse)
 library(ggplot2)
+library(ggtext)
 library(plotly)
+cbbPalette <- c( '#EE7733', '#0077BB', '#33BBEE', '#EE3377', '#CC3311', '#009988', '#BBBBBB')
+theme_set(theme_bw())
 
 
 ##FUNCTIONS-------------
@@ -27,7 +30,7 @@ siog_hard <- function(crude_mass){
 
 # Column void volume (Vm)
 calc_Vm <- function(SiOg){
-  return(1.8*SiOg+0.3)
+  return(1.81*SiOg+0.31)
 }
 # Retention volume (Vr)
 calc_Vr <- function(Vm, rf) {
@@ -42,6 +45,7 @@ calc_bandsize <- function(Vm, efficiency){
 elution_curve <- function(x, Vr, Xa, bandsize) {
   Xa * exp( -(x - Vr)^2 / (bandsize/2.8)^2 )
 }
+
 #gen layers for plot
 line_layer_add <- function(plot, funct, label){
   plot + geom_function(fun = funct, aes(colour = label), n = 500)
@@ -60,8 +64,14 @@ ui <- fluidPage(
                          #Plot settings go here!
                          title = "Plot settings",
                          bs_icon("gear"),
-                         radioButtons("xaxis", "X axis:", choices = c("mL Eluent" = "ml", "Fractions" = "frac", "Column Volumes" = "cv"), selected = "ml"),
-                         radioButtons("frac_lines", "Show fraction lines:", choices = c("Yes" = "y", "No" = "n"), selected = "n")
+                         radioButtons("x_axis_scale", "X axis:", 
+                                      c("mL Eluent" = "ml", 
+                                        "Fractions" = "frac", 
+                                        "Column Volumes" = "cv"), 
+                                      selected = "ml"),
+                         radioButtons("frac_lines", "Show fraction lines:", 
+                                      c("Yes" = "y", "No" = "n"), 
+                                      selected = "n")
                          ),
                        class = "d-flex justify-content-between"),
            plotlyOutput(outputId = "chromatogram")
@@ -97,10 +107,10 @@ ui <- fluidPage(
       
       # Optional Settings
       card(
-        card_header("Optional Settings"),
-        p(
-          "Change the values below if you wish to set your own column size or fraction size. Otherwise, set to 0."
-        ),
+        card_header("Optional Settings", 
+                    tooltip(bs_icon("info-circle"), p("CIf you wish to set your own column size or fraction size, you can do so here. Otherwise, set to 0.")
+                            )
+                    ),
         numericInput("user_silica", "Silica (g):", value = 0),
         verbatimTextOutput("silica"),
         numericInput("user_fraction_size", "Fraction size (mL):", value = 0, min = 0),
@@ -205,6 +215,8 @@ server <- function(input, output, session) {
   )
   output$silica <- renderText(rv$silica_mass)
   output$fraction_size <- renderText(rv$fraction_size)
+  
+  
   #--------------
   #PLOTTING------
   output$tlc <- renderPlot({
@@ -213,13 +225,20 @@ server <- function(input, output, session) {
       geom_point(size=5) +
       ylim(0,1) +
       scale_x_discrete(labels = NULL, breaks = NULL) +
-      labs(x = NULL) +
-      theme(legend.position="none", panel.grid.minor=element_blank())
-    tlc + scale_colour_brewer(palette = "Set1")
+      labs(x = NULL, y = "R<sub><i>f</i></sub>") +
+      theme(legend.position="none", 
+            panel.grid.minor=element_blank(),
+            axis.title.y = element_markdown(),
+            aspect.ratio = 2,
+            text = element_text(size = 20))
+    tlc + scale_colour_manual(values=cbbPalette) + geom_hline(yintercept = 0) + geom_hline(yintercept = 1)
   })
+  
+  
   
   output$chromatogram <- renderPlotly({
     if (!is.null(rv$tlc_data$bandsize)){
+      
       # Generate list of functions to plot with all but x already applied
       partials_list <- mapply(FUN=partial,
                               Vr=rv$tlc_data$Vr,
@@ -237,7 +256,22 @@ server <- function(input, output, session) {
       comb_plot <- reduce(.x = seq_along(partials_list),
                           .f = function(p, i) line_layer_add(p, partials_list[[i]], paste0("Spot ", i)),
                           .init = init_plot)
-      ggplotly(comb_plot + labs( x = "Eluent (mL)", y = "Relative peak intensity", colour = "")
+      
+      #show fraction lines if selected
+      if(input$frac_lines == "y"){
+        comb_plot <- comb_plot + geom_vline(xintercept = seq( 0, (rv$Vm * 10), by =  rv$fraction_size), alpha = 1, linetype = 3, linewidth = 0.2, colour = "#009988" )
+      }
+      
+      comb_plot <- switch(input$x_axis_scale,
+                            ml = comb_plot + labs( x = "Eluent (mL)", y = "Relative peak intensity \n", colour = ""),
+                            frac =  comb_plot + labs( x = "Fraction number", y = "Relative peak intensity \n", colour = "") + scale_x_continuous(labels = scales::label_number(scale = 1/rv$fraction_size), breaks = seq( 0, rv$Vm * 10, by =  rv$fraction_size*2) ),,
+                            cv =  comb_plot + labs( x = "Column Volume", y = "Relative peak intensity \n", colour = "") + scale_x_continuous(labels = scales::label_number(scale = 1/rv$Vm), breaks = seq( 0, rv$Vm * 10, by =  rv$Vm) )
+      )
+      
+      #display correct scale
+      ggplotly(comb_plot + 
+                 theme(text = element_text(size = 14)) +
+                 scale_colour_manual(values=cbbPalette)
         )
     }
   })
