@@ -7,6 +7,8 @@ library(tidyverse)
 library(ggplot2)
 library(ggtext)
 library(plotly)
+library(gslnls)
+library(purrr)
 cbbPalette <- c( '#EE7733', '#0077BB', '#33BBEE', '#EE3377', '#CC3311', '#009988', '#BBBBBB')
 theme_set(theme_bw())
 
@@ -55,29 +57,35 @@ line_layer_add <- function(plot, funct, label){
 #UI------------------------------------------------------------------------------------------------------
 accordion_filters <- accordion(
   accordion_panel(
-    "Data Entry", icon = bsicons::bs_icon("menu-app"),
+    title = "Data Entry", 
+    icon = bsicons::bs_icon("menu-app"),
     selectInput("data_entry", "Rf values:", c("Empirical", "Predicted"), selected = "Empirical" ),
+    numericInput("crude_mass", "Crude Mass (g)", 0.5, min = 0),
     conditionalPanel(
       condition = "input.data_entry == 'Empirical'",
-      numericInput("crude_mass", "Crude Mass (g)", 0.5, min = 0),
-      tooltip(p("Compound data", bs_icon("info-circle") ),
+      span("Compound data", tooltip(bs_icon("info-circle"),
               p("Input your Rf and mass balance (Xa) data. You can add/remove spots by right clicking and navigating the pop-up menu.")
-      ),
+              ) 
+            ),
       rHandsontableOutput("rftable")
     ),
     conditionalPanel(
       condition = "input.data_entry == 'Predicted'",
-      sliderInput("chosen_solvent_percent", "Strong solvent %", 1, 100, 30),
+      sliderInput("chosen_solvent_percent", "Strong solvent %", 1, 100, 30, animate = animationOptions(interval = 300, loop = TRUE)),
       numericInput("no_spots", "Number of Spots", value = 2, min = 1, step = 1),
       rHandsontableOutput("Xa_pred"),
+      span("Spot data", tooltip(bs_icon("info-circle"),
+                                    p("Input at least 3 Rf values for each spot. You can add/remove datapoints by right clicking and navigating the pop-up menu.")
+                                ) 
+           ),
       rHandsontableOutput("data"),
       textOutput("pred")
     )
   ),
   accordion_panel(
-    "Optional Settings", tooltip(bs_icon("info-circle"), p("If you wish to set your own column size or fraction size, you can do so here. Otherwise, set to 0.")), 
+    title = "Optional Settings",
     icon = bsicons::bs_icon("sliders"),
-    
+    span("Help", tooltip(bs_icon("info-circle"), p("If you wish to set your own column size or fraction size, you can do so here. Otherwise, set to 0.")) ),
     numericInput("user_silica", "Silica (g):", value = 0),
     verbatimTextOutput("silica"),
     numericInput("user_fraction_size", "Fraction size (mL):", value = 0, min = 0),
@@ -203,14 +211,21 @@ server <- function(input, output, session) {
   
   # Apply the function to each element of predict_data_coef
   predicted_rf_values <- reactive({
-    predicted_rf_values <- sapply(predict_data_coef(), function(x) (input$chosen_solvent_percent / x[[1]])^(-1/x[[2]])) 
+    predicted_rf_values <- try(sapply(predict_data_coef(), function(x) (input$chosen_solvent_percent / x[[1]])^(-1/x[[2]])) )
     predicted_rf_values[predicted_rf_values > 1] <- 1
     predicted_rf_values[predicted_rf_values < 0] <- 0
     return(predicted_rf_values)
   })
   
-  #outputs
-  output$pred <- renderText(predicted_rf_values())
+  #outputs & editable tables
+  output$pred <- renderText({
+    if ( any(sapply(levels(pred_values$data$spot), function(x) sum(pred_values$data$spot == x)) < 2) ) {
+      validate("Error: each spot requires at least two data points")
+    }
+    c("Predicted Rf:", 
+      round(predicted_rf_values(), 2)
+      )
+  })
   
   output$Xa_pred <-  renderRHandsontable({
     rhandsontable(tibble("Xa_pred" = pred_values$Xa)) 
@@ -235,7 +250,27 @@ server <- function(input, output, session) {
                        fraction_size = NULL
                        )
   
-  observe({ rv$tlc_data <- hot_to_r(input$rftable)
+  #load Rf/Xa data into calculations
+  observe({
+    if (input$data_entry == "Empirical") {
+      rv$tlc_data <- hot_to_r(input$rftable)
+    } else {
+      req(predicted_rf_values())
+      #Stop app from crashing when number of predicted values doesn't match length of Xa (because we're still inputting the values)
+      req(length(predicted_rf_values()) == length(pred_values$Xa) )
+      rv$tlc_data <- tibble("Rf" = predicted_rf_values(), "Xa" = pred_values$Xa) 
+    }
+  }) %>%
+  bindEvent({ #make it update only when the table/crude_mass/user_silica is updated
+    input$data_entry
+    input$rftable  
+    predicted_rf_values()
+    pred_values$Xa
+  }, label = "TLC table")
+  
+  
+  #do calculations
+  observe({ 
     rv$is_hard <- any(diff(sort(rv$tlc_data$Rf)) < 0.2)
     #Calculate efficiency of each spot (N) and column silica mass
     if (rv$is_hard == TRUE) {
@@ -282,7 +317,7 @@ server <- function(input, output, session) {
     
   }) %>%
   bindEvent({ #make it update only when the table/crude_mass/user_silica is updated
-    input$rftable
+    rv$tlc_data
     input$crude_mass
     input$user_silica
     input$user_fraction_size
