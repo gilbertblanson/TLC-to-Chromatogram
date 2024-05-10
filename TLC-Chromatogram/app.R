@@ -71,11 +71,11 @@ accordion_filters <- accordion(
     ),
     conditionalPanel(
       condition = "input.data_entry == 'Predicted'",
-      sliderInput("chosen_solvent_percent", "Strong solvent %", 1, 100, 30, animate = animationOptions(interval = 300, loop = TRUE)),
-      numericInput("no_spots", "Number of Spots", value = 2, min = 1, step = 1),
+      sliderInput("chosen_solvent_percent", "Strong solvent %", 1, 100, 15, animate = animationOptions(interval = 800, loop = TRUE)),
+      numericInput("no_spots", "Number of Spots", value = 3, min = 1, step = 1),
       rHandsontableOutput("Xa_pred"),
       span("Spot data", tooltip(bs_icon("info-circle"),
-                                    p("Input at least 3 Rf values for each spot. You can add/remove datapoints by right clicking and navigating the pop-up menu.")
+                                    p("Input at least 2 Rf values for each spot. You can add/remove datapoints by right clicking and navigating the pop-up menu.")
                                 ) 
            ),
       rHandsontableOutput("data"),
@@ -96,11 +96,11 @@ accordion_filters <- accordion(
 ui <- fluidPage(
   title = "Chromatogram Simulator",
   page_sidebar(
-    sidebar = sidebar(accordion_filters, width = 300),
+    sidebar = sidebar(accordion_filters, width = 350),
     
     #Main
     layout_columns(
-      col_widths = c(9, 3, 12),
+      col_widths = c(9, 3, 12, 12),
       row_heights = c(2, 1),
       
       card(card_header("Chromatogram",
@@ -124,13 +124,13 @@ ui <- fluidPage(
       
       card( card_header("TLC"), plotOutput(outputId = "tlc"), max_height = 500 ), 
      
-      card( card_header("Separation details"), tableOutput("resolution") )
-    ),
-    
-    #Gutter---------------------------------------------------------------------------------------------
-    tags$div("This Shiny app is based off the work of J. D. Fair and C. M. Kormos, Journal of Chromatography A, 2008, 1211, 49–54.",tags$br(),
-             "Rf prediction algorithm is based off of P. Kręcisz, K. Czarnecka and P. Szymański, Journal of Chromatographic Science, 2022, 60, 472–477.",
-             style = "font-size:10px;")
+      card( card_header("Separation details"), tableOutput("resolution") ),
+      #Gutter---------------------------------------------------------------------------------------------
+      tags$div("This Shiny app is based off the work of J. D. Fair and C. M. Kormos, Journal of Chromatography A, 2008, 1211, 49–54.",tags$br(),
+               "Rf prediction algorithm is based off of P. Kręcisz, K. Czarnecka and P. Szymański, Journal of Chromatographic Science, 2022, 60, 472–477.",
+               style = "font-size:10px;")
+      )
+
   )
 )
 
@@ -154,10 +154,10 @@ server <- function(input, output, session) {
   
   no_spots <- reactive(input$no_spots)
   
-  pred_values <- reactiveValues(data = tibble("spot" = factor(c(1,1,1,2,2,2), levels = 1:2),
-                                              "solvent_percent" = c(30, 40, 50, 30, 40, 50),
-                                              "Rf" = c(0.16, 0.26, 0.41, 0.13, 0.21, 0.35) ),
-                                Xa = c(0.8, 0.2) )
+  pred_values <- reactiveValues(data = tibble("spot" = factor(c(1,2,3,1,2,3,1,2,3), levels = 1:3),
+                                              "solvent_percent" = c(10, 10, 10, 15, 15, 15, 20, 20, 20),
+                                              "Rf" = c(0.54, 0.23, 0.1, 0.64, 0.42, 0.17, 0.7, 0.56, 0.28) ),
+                                Xa = c(0.7, 0.1, 0.2) )
   
   #update values
   observe({
@@ -166,7 +166,7 @@ server <- function(input, output, session) {
   })
   observe({
     req(input$Xa_pred)
-    pred_values$Xa = dplyr::pull(hot_to_r(input$Xa_pred))
+    pred_values$Xa = pull(hot_to_r(input$Xa_pred))
   })
   
   observe({
@@ -207,7 +207,12 @@ server <- function(input, output, session) {
   
   # Group by spot and perform regression for each group
   
-  predict_data_coef <- reactive( pred_values$data %>% group_split(spot) %>% map(perform_regression) )
+  predict_data_coef <- reactive({ 
+    validate(
+      need(any(is.na(pred_values$data)) == FALSE, "Please populate all cells")
+    )
+      pred_values$data %>% group_split(spot) %>% map(perform_regression) 
+    })
   
   # Apply the function to each element of predict_data_coef
   predicted_rf_values <- reactive({
@@ -215,11 +220,11 @@ server <- function(input, output, session) {
     predicted_rf_values[predicted_rf_values > 1] <- 1
     predicted_rf_values[predicted_rf_values < 0] <- 0
     return(predicted_rf_values)
-  })
+  }) %>% bindCache(predict_data_coef(), input$chosen_solvent_percent)
   
   #outputs & editable tables
   output$pred <- renderText({
-    if ( any(sapply(levels(pred_values$data$spot), function(x) sum(pred_values$data$spot == x)) < 2) ) {
+    if ( any(sapply(levels(pred_values$data$spot), function(x) sum(pred_values$data$spot == x)) < 2) == TRUE ) {
       validate("Error: each spot requires at least two data points")
     }
     c("Predicted Rf:", 
@@ -247,10 +252,12 @@ server <- function(input, output, session) {
                        plotdata = data.frame("solvent" = rep(0, length = 500)),
                        sep = NULL,
                        comb_plot = NULL,
-                       fraction_size = NULL
+                       fraction_size = NULL,
+                       less_than_still = NULL
                        )
   
   #load Rf/Xa data into calculations
+  #separate these equations to make it run more efficiently, using bindcache
   observe({
     if (input$data_entry == "Empirical") {
       rv$tlc_data <- hot_to_r(input$rftable)
@@ -282,7 +289,14 @@ server <- function(input, output, session) {
     }
     #if user supplies silica amt
     if (!is.na(input$user_silica) & input$user_silica != 0){
+      if(rv$is_hard == TRUE){
+        rv$less_than_still <- input$user_silica < siog_hard(input$crude_mass)
+      }else{
+        rv$less_than_still <- input$user_silica < siog_easy(input$crude_mass)
+      }
       rv$silica_mass <- input$user_silica
+    } else {
+      rv$less_than_still <- FALSE
     }
     #Calculate void volume (Vm), retention volume (Vr), bandsize
     rv$Vm <- calc_Vm(rv$silica_mass)
@@ -324,7 +338,11 @@ server <- function(input, output, session) {
     }, label = "calculations")
 
   output$resolution <- renderTable(rv$sep)
-  output$silica <- renderText(rv$silica_mass)
+  output$silica <- renderText({
+    if(rv$less_than_still == TRUE){
+      c(rv$silica_mass, "\nWarning: Larger Loading Than Still Describes")
+    }else rv$silica_mass
+  })
   output$fraction_size <- renderText(rv$fraction_size)
   
   
@@ -370,12 +388,12 @@ server <- function(input, output, session) {
       
       #show fraction lines if selected
       if(input$frac_lines == "y"){
-        comb_plot <- comb_plot + geom_vline(xintercept = seq( 0, (rv$Vm * 10), by =  rv$fraction_size), alpha = 1, linetype = 3, linewidth = 0.2, colour = "#009988" )
+        comb_plot <- comb_plot + geom_vline(xintercept = seq( 0, (rv$Vm * 10), by =  rv$fraction_size), alpha = 0.5, linetype = 3, linewidth = 0.5, colour = "#009988" )
       }
       
       comb_plot <- switch(input$x_axis_scale,
                             ml = comb_plot + labs( x = "Eluent (mL)", y = "Relative peak intensity \n", colour = ""),
-                            frac =  comb_plot + labs( x = "Fraction number", y = "Relative peak intensity \n", colour = "") + scale_x_continuous(labels = scales::label_number(scale = 1/rv$fraction_size), breaks = seq( 0, rv$Vm * 10, by =  rv$fraction_size*2) ),,
+                            frac =  comb_plot + labs( x = "Fraction number", y = "Relative peak intensity \n", colour = "") + scale_x_continuous(labels = scales::label_number(scale = 1/rv$fraction_size), breaks = seq( 0, rv$Vm * 10, by =  rv$fraction_size*2) ),
                             cv =  comb_plot + labs( x = "Column Volume", y = "Relative peak intensity \n", colour = "") + scale_x_continuous(labels = scales::label_number(scale = 1/rv$Vm), breaks = seq( 0, rv$Vm * 10, by =  rv$Vm) )
       )
       
@@ -385,7 +403,7 @@ server <- function(input, output, session) {
                  scale_colour_manual(values=cbbPalette)
         )
     }
-  })
+  }) %>% bindCache(rv$tlc_data, input$x_axis_scale, rv$Vm, rv$fraction_size, input$frac_lines)
   
 }
 
