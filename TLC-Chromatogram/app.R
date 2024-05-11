@@ -165,11 +165,11 @@ server <- function(input, output, session) {
     do.call(tagList, sliders)
   })
   
-  #make spot i slider update the value of emp_Rf[i]
-  observeEvent(input$no_spots, {
-    lapply(1:input$no_spots, function(i) {
-      observeEvent(input[[paste0("Spot ", i)]], {
-        pred_values$emp_Rf[i] <- input[[paste0("Spot ", i)]]
+  # Make spot i slider update the value of Rf[i] using map
+  observe({
+    map(1:input$no_spots, ~{
+      observeEvent(input[[paste0("Spot ", .x)]], {
+        pred_values$emp_Rf[.x] <- input[[paste0("Spot ", .x)]]
       })
     })
   })
@@ -228,7 +228,9 @@ server <- function(input, output, session) {
       need(any(is.na(pred_values$data)) == FALSE, "Please populate all cells")
     )
       pred_values$data %>% group_split(spot) %>% map(perform_regression) 
-    })
+    }) %>% 
+    bindCache(pred_values$data) %>%
+    bindEvent(pred_values$data, input$data_entry == "Empirical")
   
   # Apply the function to each element of predict_data_coef
   predicted_rf_values <- reactive({
