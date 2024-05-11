@@ -58,22 +58,18 @@ line_layer_add <- function(plot, funct, label){
 accordion_filters <- accordion(
   accordion_panel(
     title = "Data Entry", 
-    icon = bsicons::bs_icon("menu-app"),
+    icon = bs_icon("menu-app"),
     selectInput("data_entry", "Rf values:", c("Empirical", "Predicted"), selected = "Empirical" ),
     numericInput("crude_mass", "Crude Mass (g)", 0.5, min = 0),
+    numericInput("no_spots", "Number of Spots", value = 3, min = 1, step = 1),
+    rHandsontableOutput("Xa"),
     conditionalPanel(
       condition = "input.data_entry == 'Empirical'",
-      span("Compound data", tooltip(bs_icon("info-circle"),
-              p("Input your Rf and mass balance (Xa) data. You can add/remove spots by right clicking and navigating the pop-up menu.")
-              ) 
-            ),
-      rHandsontableOutput("rftable")
+      uiOutput("sliders")
     ),
     conditionalPanel(
       condition = "input.data_entry == 'Predicted'",
-      sliderInput("chosen_solvent_percent", "Strong solvent %", 1, 100, 15, animate = animationOptions(interval = 800, loop = TRUE)),
-      numericInput("no_spots", "Number of Spots", value = 3, min = 1, step = 1),
-      rHandsontableOutput("Xa_pred"),
+      sliderInput("chosen_solvent_percent", "Strong solvent %", 1, 100, 15, animate = animationOptions(interval = 800, loop = TRUE), post="%"),
       span("Spot data", tooltip(bs_icon("info-circle"),
                                     p("Input at least 2 Rf values for each spot. You can add/remove datapoints by right clicking and navigating the pop-up menu.")
                                 ) 
@@ -84,12 +80,11 @@ accordion_filters <- accordion(
   ),
   accordion_panel(
     title = "Optional Settings",
-    icon = bsicons::bs_icon("sliders"),
-    span("Help", tooltip(bs_icon("info-circle"), p("If you wish to set your own column size or fraction size, you can do so here. Otherwise, set to 0.")) ),
+    icon = bs_icon("sliders"),
+    card("Column size and fraction size is automatically calculated based off Still's recommendations. If you wish to set your own column size or fraction size, you can do so here. Otherwise, set to 0."),
     numericInput("user_silica", "Silica (g):", value = 0),
-    verbatimTextOutput("silica"),
+    verbatimTextOutput("silica_warning"),
     numericInput("user_fraction_size", "Fraction size (mL):", value = 0, min = 0),
-    verbatimTextOutput("fraction_size")
   )
 )
 
@@ -100,9 +95,22 @@ ui <- fluidPage(
     
     #Main
     layout_columns(
-      col_widths = c(9, 3, 12, 12),
-      row_heights = c(2, 1),
-      
+      col_widths = c(6, 6, 9, 3, 12, 12),
+      fill = FALSE,
+      value_box(
+        title = "Recommended Silica (g)",
+        value = textOutput("rec_sil"),
+        showcase = bs_icon("bar-chart"),
+        p("Selected silica"),
+        textOutput("user_sil")
+      ),
+      value_box(
+        title = "Recommended Fraction Size (mL)",
+        value = textOutput("rec_frac"),
+        showcase = bs_icon("graph-up"),
+        p("Selected fraction size"),
+        textOutput("user_frac")
+      ),
       card(card_header("Chromatogram",
                        popover(
                          #Plot settings go here!
@@ -139,34 +147,43 @@ ui <- fluidPage(
 #SERVER----------------------------------------------------------------------------------------------------
 server <- function(input, output, session) {
   
-  ##USER TLC DATA INPUT -- ISOCRATIC ---------------------------------------------------------------------------------------------
-  # Default TLC data for editable table
-  default_tlc <- reactive(data.frame(
-    "Rf" = c(0.71, 0.4, 0.2),
-    "Xa" = c(0.2, 0.5, 0.3)
-  ))
-  # Render the editable Rf table
-  output$rftable <- renderRHandsontable({
-    rhandsontable(default_tlc(), selectCallback=TRUE, readOnly = FALSE)
-  })
-  
-  ##USER TLC DATA INPUT -- RF PREDICTION ---------------------------------------------------------------------------------------- 
-  
-  no_spots <- reactive(input$no_spots)
-  
   pred_values <- reactiveValues(data = tibble("spot" = factor(c(1,2,3,1,2,3,1,2,3), levels = 1:3),
                                               "solvent_percent" = c(10, 10, 10, 15, 15, 15, 20, 20, 20),
                                               "Rf" = c(0.54, 0.23, 0.1, 0.64, 0.42, 0.17, 0.7, 0.56, 0.28) ),
-                                Xa = c(0.7, 0.1, 0.2) )
+                                Xa = c(0.7, 0.1, 0.2),
+                                emp_Rf = c(0.54, 0.23, 0.1))
   
+  ##USER TLC DATA INPUT -- ISOCRATIC ---------------------------------------------------------------------------------------------
+
+  output$sliders <- renderUI({
+    # First, create a list of sliders each with a different name
+    sliders <- lapply(1:input$no_spots, function(i) {
+      inputName <- paste0("Spot ", i)
+      sliderInput(inputName, inputName, min=0, max=1, value= pred_values$emp_Rf[i])
+    })
+    # Create a tagList of sliders (this is important)
+    do.call(tagList, sliders)
+  })
+  
+  #make spot i slider update the value of emp_Rf[i]
+  observeEvent(input$no_spots, {
+    lapply(1:input$no_spots, function(i) {
+      observeEvent(input[[paste0("Spot ", i)]], {
+        pred_values$emp_Rf[i] <- input[[paste0("Spot ", i)]]
+      })
+    })
+  })
+  
+  ##USER TLC DATA INPUT -- RF PREDICTION ---------------------------------------------------------------------------------------- 
+
   #update values
   observe({
     req(input$data)
     pred_values$data = hot_to_r(input$data)
   })
   observe({
-    req(input$Xa_pred)
-    pred_values$Xa = pull(hot_to_r(input$Xa_pred))
+    req(input$Xa)
+    pred_values$Xa = as.vector(hot_to_r(input$Xa))
   })
   
   observe({
@@ -175,20 +192,19 @@ server <- function(input, output, session) {
     l_max <- max(as.numeric(levels(pred_values$data$spot)))
     spot_diff <- input$no_spots - l_max
     
-    if (input$no_spots > l_max ) {
+    if (spot_diff > 0 ) {
       
-      #increase levels of spot rows
+      #increase levels of spot rows, emp_Rf, and Xa
       levels(pred_values$data$spot) <-  1:input$no_spots
-      #increase mass balance spots
+      pred_values$emp_Rf <-  append(pred_values$emp_Rf, rep(0.2, spot_diff))
       pred_values$Xa <-  append(pred_values$Xa, rep(0.5, spot_diff))
       
-    } else if (input$no_spots < l_max ) {
-      #delete rows of larger spot no's & change levels of spot rows
+    } else if (spot_diff < 0 ) {
+      #delete rows of larger spot no's, change levels of spot rows, emp_Rf, and Xa
       pred_values$data <- filter(pred_values$data, as.numeric(spot) <= input$no_spots) %>%
         droplevels()
       levels(pred_values$data$spot) <-  1:input$no_spots
-      
-      #delete mass balance spots
+      pred_values$emp_Rf <-  pred_values$emp_Rf[1:input$no_spots]
       pred_values$Xa <-  pred_values$Xa[1:input$no_spots]
     }
   })
@@ -232,8 +248,8 @@ server <- function(input, output, session) {
       )
   })
   
-  output$Xa_pred <-  renderRHandsontable({
-    rhandsontable(tibble("Xa_pred" = pred_values$Xa)) 
+  output$Xa <-  renderRHandsontable({
+    rhandsontable(as.matrix(pred_values$Xa)%>%`colnames<-`("Mass Balance"))
   })
   
   output$data <-  renderRHandsontable({
@@ -260,7 +276,7 @@ server <- function(input, output, session) {
   #separate these equations to make it run more efficiently, using bindcache
   observe({
     if (input$data_entry == "Empirical") {
-      rv$tlc_data <- hot_to_r(input$rftable)
+      rv$tlc_data <- tibble("Rf" = pred_values$emp_Rf, "Xa" = pred_values$Xa)
     } else {
       req(predicted_rf_values())
       #Stop app from crashing when number of predicted values doesn't match length of Xa (because we're still inputting the values)
@@ -270,8 +286,8 @@ server <- function(input, output, session) {
   }) %>%
   bindEvent({ #make it update only when the table/crude_mass/user_silica is updated
     input$data_entry
-    input$rftable  
     predicted_rf_values()
+    pred_values$emp_Rf
     pred_values$Xa
   }, label = "TLC table")
   
@@ -337,13 +353,24 @@ server <- function(input, output, session) {
     input$user_fraction_size
     }, label = "calculations")
 
+  #Resolution Data Output
   output$resolution <- renderTable(rv$sep)
-  output$silica <- renderText({
+  
+  #Silica and Fraction Data output
+  output$silica_warning <- renderText({
     if(rv$less_than_still == TRUE){
-      c(rv$silica_mass, "\nWarning: Larger Loading Than Still Describes")
-    }else rv$silica_mass
+      c("Warning: Larger Loading Than Still Describes")
+    }else ""
   })
-  output$fraction_size <- renderText(rv$fraction_size)
+  
+  output$user_frac <- renderText(rv$fraction_size)
+  output$rec_frac <- renderText(rv$Vm/3)
+  
+  output$user_sil <- renderText(rv$silica_mass)
+  output$rec_sil <- renderText({
+    if (rv$is_hard == TRUE) siog_hard(input$crude_mass)
+    else siog_easy(input$crude_mass)
+  })
   
   
   #-----------------------------------------------------------------------------------------------------------
