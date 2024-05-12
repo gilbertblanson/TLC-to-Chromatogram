@@ -222,8 +222,7 @@ server <- function(input, output, session) {
   
   predict_data_coef <- reactive({ 
     validate(
-      need(any(sapply(levels(pred_values$data$spot), function(x) sum(pred_values$data$spot == x)) < 2) == FALSE, "Error: each spot requires at least two data points"),
-      need(any(is.na(pred_values$data)) == FALSE, "Error: please populate all cells")
+      need(any(is.na(pred_values$data)) == FALSE, "Please populate all cells")
     )
     pred_values$data %>% group_split(spot) %>% map(perform_regression) 
   }) %>% 
@@ -240,6 +239,9 @@ server <- function(input, output, session) {
   
   #outputs & editable tables
   output$pred <- renderText({
+    if ( any(sapply(levels(pred_values$data$spot), function(x) sum(pred_values$data$spot == x)) < 2) == TRUE ) {
+      validate("Error: each spot requires at least two data points")
+    }
     c("Predicted Rf:", 
       round(predicted_rf_values(), 2)
     )
