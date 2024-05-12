@@ -47,10 +47,20 @@ calc_bandsize <- function(Vm, efficiency){
 elution_curve <- function(x, Vr, Xa, bandsize) {
   Xa * exp( -(x - Vr)^2 / (bandsize/2.8)^2 )
 }
-
 #gen layers for plot
 line_layer_add <- function(plot, funct, label){
-  plot + geom_function(fun = funct, aes(colour = label), n = 500)
+  plot + geom_function(fun = funct, aes(colour = label), n = 400)
+}
+#regression function for predicted Rfs
+perform_regression <- function(data) {
+  gsl_nls(Rf ~ (solvent_percent/phi_nought)^(-1/k), 
+          data, 
+          start = list(phi_nought = 8, k = -0.5),
+          algorithm = "lm",
+          control = list(scale = "levenberg"),
+          upper = list(k = 0),
+          lower = list(phi_nought = 0)) %>%
+    coef()
 }
 
 #--------------------------------------------------------------------------------------------------------
@@ -71,9 +81,9 @@ accordion_filters <- accordion(
       condition = "input.data_entry == 'Predicted'",
       sliderInput("chosen_solvent_percent", "Strong solvent %", 1, 100, 15, animate = animationOptions(interval = 800, loop = TRUE), post="%"),
       span("Spot data", tooltip(bs_icon("info-circle"),
-                                    p("Input at least 2 Rf values for each spot. You can add/remove datapoints by right clicking and navigating the pop-up menu.")
-                                ) 
-           ),
+                                p("Input at least 2 Rf values for each spot. You can add/remove datapoints by right clicking and navigating the pop-up menu.")
+      ) 
+      ),
       rHandsontableOutput("data"),
       textOutput("pred")
     )
@@ -131,14 +141,14 @@ ui <- fluidPage(
       ),
       
       card( card_header("TLC"), plotOutput(outputId = "tlc"), max_height = 500 ), 
-     
+      
       card( card_header("Separation details"), tableOutput("resolution") ),
       #Gutter---------------------------------------------------------------------------------------------
       tags$div("This Shiny app is based off the work of J. D. Fair and C. M. Kormos, Journal of Chromatography A, 2008, 1211, 49–54.",tags$br(),
                "Rf prediction algorithm is based off of P. Kręcisz, K. Czarnecka and P. Szymański, Journal of Chromatographic Science, 2022, 60, 472–477.",
                style = "font-size:10px;")
-      )
-
+    )
+    
   )
 )
 
@@ -152,30 +162,6 @@ server <- function(input, output, session) {
                                               "Rf" = c(0.54, 0.23, 0.1, 0.64, 0.42, 0.17, 0.7, 0.56, 0.28) ),
                                 Xa = c(0.7, 0.1, 0.2),
                                 emp_Rf = c(0.54, 0.23, 0.1))
-  
-  ##USER TLC DATA INPUT -- ISOCRATIC ---------------------------------------------------------------------------------------------
-
-  output$sliders <- renderUI({
-    # First, create a list of sliders each with a different name
-    sliders <- lapply(1:input$no_spots, function(i) {
-      inputName <- paste0("Spot ", i)
-      sliderInput(inputName, inputName, min=0, max=1, value= pred_values$emp_Rf[i])
-    })
-    # Create a tagList of sliders (this is important)
-    do.call(tagList, sliders)
-  })
-  
-  # Make spot i slider update the value of Rf[i] using map
-  observe({
-    map(1:input$no_spots, ~{
-      observeEvent(input[[paste0("Spot ", .x)]], {
-        pred_values$emp_Rf[.x] <- input[[paste0("Spot ", .x)]]
-      })
-    })
-  })
-  
-  ##USER TLC DATA INPUT -- RF PREDICTION ---------------------------------------------------------------------------------------- 
-
   #update values
   observe({
     req(input$data)
@@ -186,7 +172,7 @@ server <- function(input, output, session) {
     pred_values$Xa = as.vector(hot_to_r(input$Xa))
   })
   
-  observe({
+  observe(label = "val_update", priority = 1, {
     req(input$no_spots)
     
     l_max <- max(as.numeric(levels(pred_values$data$spot)))
@@ -209,17 +195,28 @@ server <- function(input, output, session) {
     }
   })
   
-  #regression function
-  perform_regression <- function(data) {
-    gsl_nls(Rf ~ (solvent_percent/phi_nought)^(-1/k), 
-            data, 
-            start = list(phi_nought = 8, k = -0.5),
-            algorithm = "lm",
-            control = list(scale = "levenberg"),
-            upper = list(k = 0),
-            lower = list(phi_nought = 0)) %>%
-      coef()
-  }
+  ##USER TLC DATA INPUT -- ISOCRATIC ---------------------------------------------------------------------------------------------
+  
+  # Make spot i slider update the value of Rf[i] using map
+  observe({
+    map(1:input$no_spots, ~{
+      observeEvent(input[[paste0("Spot ", .x)]], {
+        pred_values$emp_Rf[.x] <- input[[paste0("Spot ", .x)]]
+      })
+    })
+  }) %>% bindEvent(input$no_spots)
+  
+  output$sliders <- renderUI({ 
+    # First, create a list of sliders each with a different name
+    sliders <- map(1:input$no_spots, ~{
+      inputName <- paste0("Spot ", .x)
+      sliderInput(inputName, inputName, min = 0, max = 1, value = pred_values$emp_Rf[.x])
+    })
+    # Create a tagList of sliders (this is important)
+    do.call(tagList, sliders)
+  }) %>% bindEvent(input$no_spots)
+  
+  ##USER TLC DATA INPUT -- RF PREDICTION ---------------------------------------------------------------------------------------- 
   
   # Group by spot and perform regression for each group
   
@@ -227,8 +224,8 @@ server <- function(input, output, session) {
     validate(
       need(any(is.na(pred_values$data)) == FALSE, "Please populate all cells")
     )
-      pred_values$data %>% group_split(spot) %>% map(perform_regression) 
-    }) %>% 
+    pred_values$data %>% group_split(spot) %>% map(perform_regression) 
+  }) %>% 
     bindCache(pred_values$data) %>%
     bindEvent(pred_values$data, input$data_entry == "Empirical")
   
@@ -247,7 +244,7 @@ server <- function(input, output, session) {
     }
     c("Predicted Rf:", 
       round(predicted_rf_values(), 2)
-      )
+    )
   })
   
   output$Xa <-  renderRHandsontable({
@@ -272,7 +269,7 @@ server <- function(input, output, session) {
                        comb_plot = NULL,
                        fraction_size = NULL,
                        less_than_still = NULL
-                       )
+  )
   
   #load Rf/Xa data into calculations
   #separate these equations to make it run more efficiently, using bindcache
@@ -286,12 +283,12 @@ server <- function(input, output, session) {
       rv$tlc_data <- tibble("Rf" = predicted_rf_values(), "Xa" = pred_values$Xa) 
     }
   }) %>%
-  bindEvent({ #make it update only when the table/crude_mass/user_silica is updated
-    input$data_entry
-    predicted_rf_values()
-    pred_values$emp_Rf
-    pred_values$Xa
-  }, label = "TLC table")
+    bindEvent({ #make it update only when the table/crude_mass/user_silica is updated
+      input$data_entry
+      predicted_rf_values()
+      pred_values$emp_Rf
+      pred_values$Xa
+    }, label = "TLC table")
   
   
   #do calculations
@@ -329,12 +326,12 @@ server <- function(input, output, session) {
           Rs > 1.5 ~ "Good", 
           Rs > 0.8 ~ "Moderate", 
           .default = "Bad")
-          ) 
+        ) 
       rv$sep <- data.frame(
         "Peak_Start_mL" = rv$tlc_data$Vr - rv$tlc_data$bandsize/2,
         "Peak_Middle_mL" = rv$tlc_data$Vr,
         "Peak_End_mL" = rv$tlc_data$Vr + rv$tlc_data$bandsize/2
-        ) %>%
+      ) %>%
         bind_cols(rv$sep, .)
       #to-do: start middle end peak
       if (!is.na(input$user_fraction_size)) {
@@ -348,20 +345,20 @@ server <- function(input, output, session) {
     }
     
   }) %>%
-  bindEvent({ #make it update only when the table/crude_mass/user_silica is updated
-    rv$tlc_data
-    input$crude_mass
-    input$user_silica
-    input$user_fraction_size
+    bindEvent({ #make it update only when the table/crude_mass/user_silica is updated
+      rv$tlc_data
+      input$crude_mass
+      input$user_silica
+      input$user_fraction_size
     }, label = "calculations")
-
+  
   #Resolution Data Output
   output$resolution <- renderTable(rv$sep)
   
   #Silica and Fraction Data output
   output$silica_warning <- renderText({
     if(rv$less_than_still == TRUE){
-      c("Warning: Larger Loading Than Still Describes")
+      c("Warning: Silica is below recommended amount!")
     }else ""
   })
   
@@ -390,48 +387,47 @@ server <- function(input, output, session) {
             aspect.ratio = 2,
             text = element_text(size = 20))
     tlc + scale_colour_manual(values=cbbPalette) + geom_hline(yintercept = 0) + geom_hline(yintercept = 1)
-  })
+  }) %>% bindCache(rv$tlc_data$Rf)
   
   
   
   output$chromatogram <- renderPlotly({
-    if (!is.null(rv$tlc_data$bandsize)){
-      
-      # Generate list of functions to plot with all but x already applied
-      partials_list <- mapply(FUN=partial,
-                              Vr=rv$tlc_data$Vr,
-                              Xa=rv$tlc_data$Xa,
-                              bandsize=rv$tlc_data$bandsize,
-                              MoreArgs=list(`.f`=elution_curve))
-      
-      # Data to plot. Defining the domain for the plotted functions.
-      plot_data <- data.frame(x = seq(0, rv$Vm * 10, length.out = 10))
-      
-      # Initial plot object
-      init_plot <- ggplot(plot_data, aes(x=x))
-      
-      # Generate layers and accumulate to plot object with label
-      comb_plot <- reduce(.x = seq_along(partials_list),
-                          .f = function(p, i) line_layer_add(p, partials_list[[i]], paste0("Spot ", i)),
-                          .init = init_plot)
-      
-      #show fraction lines if selected
-      if(input$frac_lines == "y"){
-        comb_plot <- comb_plot + geom_vline(xintercept = seq( 0, (rv$Vm * 10), by =  rv$fraction_size), alpha = 0.5, linetype = 3, linewidth = 0.5, colour = "#009988" )
-      }
-      
-      comb_plot <- switch(input$x_axis_scale,
-                            ml = comb_plot + labs( x = "Eluent (mL)", y = "Relative peak intensity \n", colour = ""),
-                            frac =  comb_plot + labs( x = "Fraction number", y = "Relative peak intensity \n", colour = "") + scale_x_continuous(labels = scales::label_number(scale = 1/rv$fraction_size), breaks = seq( 0, rv$Vm * 10, by =  rv$fraction_size*2) ),
-                            cv =  comb_plot + labs( x = "Column Volume", y = "Relative peak intensity \n", colour = "") + scale_x_continuous(labels = scales::label_number(scale = 1/rv$Vm), breaks = seq( 0, rv$Vm * 10, by =  rv$Vm) )
-      )
-      
-      #display correct scale
-      ggplotly(comb_plot + 
-                 theme(text = element_text(size = 14)) +
-                 scale_colour_manual(values=cbbPalette)
-        )
+    req(rv$tlc_data$bandsize)
+    
+    # Generate list of functions to plot with all but x already applied
+    partials_list <- mapply(FUN=partial,
+                            Vr=rv$tlc_data$Vr,
+                            Xa=rv$tlc_data$Xa,
+                            bandsize=rv$tlc_data$bandsize,
+                            MoreArgs=list(`.f`=elution_curve))
+    
+    # Data to plot. Defining the domain for the plotted functions.
+    plot_data <- data.frame(x = seq(0, rv$Vm * 10, length.out = 10))
+    
+    # Initial plot object
+    init_plot <- ggplot(plot_data, aes(x=x))
+    
+    # Generate layers and accumulate to plot object with label
+    comb_plot <- reduce(.x = seq_along(partials_list),
+                        .f = function(p, i) line_layer_add(p, partials_list[[i]], paste0("Spot ", i)),
+                        .init = init_plot)
+    
+    #show fraction lines if selected
+    if(input$frac_lines == "y"){
+      comb_plot <- comb_plot + geom_vline(xintercept = seq( 0, (rv$Vm * 10), by =  rv$fraction_size), alpha = 0.5, linetype = 3, linewidth = 0.5, colour = "#009988" )
     }
+    
+    comb_plot <- switch(input$x_axis_scale,
+                        ml = comb_plot + labs( x = "Eluent (mL)", y = "Relative peak intensity \n", colour = ""),
+                        frac =  comb_plot + labs( x = "Fraction number", y = "Relative peak intensity \n", colour = "") + scale_x_continuous(labels = scales::label_number(scale = 1/rv$fraction_size), breaks = seq( 0, rv$Vm * 10, by =  rv$fraction_size*2) ),
+                        cv =  comb_plot + labs( x = "Column Volume", y = "Relative peak intensity \n", colour = "") + scale_x_continuous(labels = scales::label_number(scale = 1/rv$Vm), breaks = seq( 0, rv$Vm * 10, by =  rv$Vm) )
+    )
+    
+    #display correct scale
+    ggplotly(comb_plot + 
+               theme(text = element_text(size = 14)) +
+               scale_colour_manual(values=cbbPalette)
+    )
   }) %>% bindCache(rv$tlc_data, input$x_axis_scale, rv$Vm, rv$fraction_size, input$frac_lines)
   
 }
