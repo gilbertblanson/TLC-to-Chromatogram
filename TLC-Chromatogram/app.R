@@ -197,7 +197,7 @@ server <- function(input, output, session) {
       pred_values$emp_Rf <-  pred_values$emp_Rf[1:input$no_spots]
       pred_values$Xa <-  pred_values$Xa[1:input$no_spots]
     }
-  }) %>% throttle(5000)
+  })
   
   ##USER TLC DATA INPUT -- ISOCRATIC ---------------------------------------------------------------------------------------------
   
@@ -262,7 +262,7 @@ server <- function(input, output, session) {
   #-----------------------------------------------------------------------------------------------------------------
   #CALCULATIONS ----------------------------------------------------------------------------------------------------
   
-  
+  #reactive values for storing data
   rv <- reactiveValues(tlc_data = NULL,
                        is_hard = NULL,
                        silica_mass = NULL,
@@ -275,7 +275,6 @@ server <- function(input, output, session) {
   )
   
   #load Rf/Xa data into calculations
-  #separate these equations to make it run more efficiently, using bindcache
   observe({
     if (input$data_entry == "Empirical") {
       rv$tlc_data <- tibble("Rf" = pred_values$emp_Rf, "Xa" = pred_values$Xa)
@@ -286,7 +285,7 @@ server <- function(input, output, session) {
       rv$tlc_data <- tibble("Rf" = predicted_rf_values(), "Xa" = pred_values$Xa) 
     }
   }) %>%
-    bindEvent({ #make it update only when the table/crude_mass/user_silica is updated
+    bindEvent({
       input$data_entry
       predicted_rf_values()
       pred_values$emp_Rf
@@ -298,49 +297,44 @@ server <- function(input, output, session) {
   observe({ 
     rv$is_hard <- any(diff(sort(rv$tlc_data$Rf)) < 0.2)
     #Calculate efficiency of each spot (N) and column silica mass
-    if (rv$is_hard == TRUE) {
+    if (rv$is_hard) {
       rv$tlc_data$efficiency <- N_hard(rv$tlc_data$Xa)
       rv$silica_mass <- siog_hard(input$crude_mass)
     } else {
       rv$tlc_data$efficiency <- N_easy(rv$tlc_data$Xa)
       rv$silica_mass <- siog_easy(input$crude_mass)
     }
+    
+    rv$less_than_still <- FALSE
+    
     #if user supplies silica amt
     if (!is.na(input$user_silica) & input$user_silica != 0){
-      if(rv$is_hard == TRUE){
-        rv$less_than_still <- input$user_silica < siog_hard(input$crude_mass)
-      }else{
-        rv$less_than_still <- input$user_silica < siog_easy(input$crude_mass)
-      }
       rv$silica_mass <- input$user_silica
-    } else {
-      rv$less_than_still <- FALSE
+      rv$less_than_still <- if_else(rv$is_hard, input$user_silica < siog_hard(input$crude_mass), input$user_silica < siog_easy(input$crude_mass))
     }
+    
     #Calculate void volume (Vm), retention volume (Vr), bandsize
     rv$Vm <- calc_Vm(rv$silica_mass)
     rv$tlc_data$Vr <- calc_Vr(rv$Vm, rv$tlc_data$Rf)
     rv$tlc_data$bandsize <- calc_bandsize(rv$tlc_data$Vr, rv$tlc_data$efficiency)
     if (!is.na(input$user_fraction_size)) {
       rv$fraction_size <- case_when(input$user_fraction_size != 0 ~ input$user_fraction_size, .default = rv$Vm/3)
-    } else { rv$fraction_size <- rv$Vm/3 }
+    } else rv$fraction_size <- rv$Vm/3
     
-    #make sure the rows are calculated before this is done
-    if (!is.null(nrow(rv$tlc_data))){
-      rv$sep <- data.frame("Rs" = 2*( rv$tlc_data$Vr - lag(rv$tlc_data$Vr) )/( rv$tlc_data$bandsize + lag(rv$tlc_data$bandsize) )) %>%
-        mutate( Separation =  case_when(
-          is.na(Rs) == TRUE ~ NA, 
-          Rs > 1.5 ~ "Good", 
-          Rs > 0.8 ~ "Moderate", 
-          .default = "Bad"),
-          Peak_Start_mL = rv$tlc_data$Vr - rv$tlc_data$bandsize/2,
-          Peak_Middle_mL = rv$tlc_data$Vr,
-          Peak_End_mL = rv$tlc_data$Vr + rv$tlc_data$bandsize/2,
-          Fraction_Start = Peak_Start_mL/rv$fraction_size, 
-          Fraction_Mid = Peak_Middle_mL/rv$fraction_size, 
-          Fraction_End = Peak_End_mL/rv$fraction_size,
-          Fraction_sep = Fraction_Start - lag(Fraction_End)
-        ) 
-    }
+    rv$sep <- data.frame("Rs" = 2*( rv$tlc_data$Vr - lag(rv$tlc_data$Vr) )/( rv$tlc_data$bandsize + lag(rv$tlc_data$bandsize) )) %>%
+      mutate( Separation =  case_when(
+        is.na(Rs) == TRUE ~ NA, 
+        Rs > 1.5 ~ "Good", 
+        Rs > 0.8 ~ "Moderate", 
+        .default = "Bad"),
+        Peak_Start_mL = rv$tlc_data$Vr - rv$tlc_data$bandsize/2,
+        Peak_Middle_mL = rv$tlc_data$Vr,
+        Peak_End_mL = rv$tlc_data$Vr + rv$tlc_data$bandsize/2,
+        Fraction_Start = Peak_Start_mL/rv$fraction_size, 
+        Fraction_Mid = Peak_Middle_mL/rv$fraction_size, 
+        Fraction_End = Peak_End_mL/rv$fraction_size,
+        Fraction_sep = Fraction_Start - lag(Fraction_End)
+      ) 
     
   }) %>%
     bindEvent({ #make it update only when the table/crude_mass/user_silica is updated
