@@ -53,14 +53,18 @@ line_layer_add <- function(plot, funct, label){
 }
 #regression function for predicted Rfs
 perform_regression <- function(data) {
-  gsl_nls(Rf ~ (solvent_percent/phi_nought)^(-1/k), 
-          data, 
-          start = list(phi_nought = 8, k = -0.5),
-          algorithm = "lm",
-          control = list(scale = "levenberg"),
-          upper = list(k = 0),
-          lower = list(phi_nought = 0)) %>%
-    coef()
+  if(nrow(data) < 2) {
+    return(c(1, -0.0001)) #lol
+  } else {
+    gsl_nls(Rf ~ (solvent_percent/phi_nought)^(-1/k), 
+            data, 
+            start = list(phi_nought = 8, k = -0.5),
+            algorithm = "lm",
+            control = list(scale = "levenberg"),
+            upper = list(k = 0),
+            lower = list(phi_nought = 0)) %>%
+      coef()
+  }
 }
 
 #--------------------------------------------------------------------------------------------------------
@@ -193,7 +197,7 @@ server <- function(input, output, session) {
       pred_values$emp_Rf <-  pred_values$emp_Rf[1:input$no_spots]
       pred_values$Xa <-  pred_values$Xa[1:input$no_spots]
     }
-  })
+  }) %>% throttle(5000)
   
   ##USER TLC DATA INPUT -- ISOCRATIC ---------------------------------------------------------------------------------------------
   
@@ -219,15 +223,14 @@ server <- function(input, output, session) {
   ##USER TLC DATA INPUT -- RF PREDICTION ---------------------------------------------------------------------------------------- 
   
   # Group by spot and perform regression for each group
-  
+  #Issues here: still run even when input$data_entry is = predicted
   predict_data_coef <- reactive({ 
     validate(
       need(any(is.na(pred_values$data)) == FALSE, "Please populate all cells")
     )
-    pred_values$data %>% group_split(spot) %>% map(perform_regression) 
+    pred_values$data %>% group_split(spot) %>% map(perform_regression)
   }) %>% 
-    bindCache(pred_values$data) %>%
-    bindEvent(pred_values$data, input$data_entry == "Empirical")
+    bindCache(pred_values$data)
   
   # Apply the function to each element of predict_data_coef
   predicted_rf_values <- reactive({
@@ -239,7 +242,7 @@ server <- function(input, output, session) {
   
   #outputs & editable tables
   output$pred <- renderText({
-    if ( any(sapply(levels(pred_values$data$spot), function(x) sum(pred_values$data$spot == x)) < 2) == TRUE ) {
+    if ( any(table(pred_values$data$spot) < 2) == TRUE ) {
       validate("Error: each spot requires at least two data points")
     }
     c("Predicted Rf:", 
@@ -317,6 +320,9 @@ server <- function(input, output, session) {
     rv$Vm <- calc_Vm(rv$silica_mass)
     rv$tlc_data$Vr <- calc_Vr(rv$Vm, rv$tlc_data$Rf)
     rv$tlc_data$bandsize <- calc_bandsize(rv$tlc_data$Vr, rv$tlc_data$efficiency)
+    if (!is.na(input$user_fraction_size)) {
+      rv$fraction_size <- case_when(input$user_fraction_size != 0 ~ input$user_fraction_size, .default = rv$Vm/3)
+    } else { rv$fraction_size <- rv$Vm/3 }
     
     #make sure the rows are calculated before this is done
     if (!is.null(nrow(rv$tlc_data))){
@@ -325,23 +331,15 @@ server <- function(input, output, session) {
           is.na(Rs) == TRUE ~ NA, 
           Rs > 1.5 ~ "Good", 
           Rs > 0.8 ~ "Moderate", 
-          .default = "Bad")
+          .default = "Bad"),
+          Peak_Start_mL = rv$tlc_data$Vr - rv$tlc_data$bandsize/2,
+          Peak_Middle_mL = rv$tlc_data$Vr,
+          Peak_End_mL = rv$tlc_data$Vr + rv$tlc_data$bandsize/2,
+          Fraction_Start = Peak_Start_mL/rv$fraction_size, 
+          Fraction_Mid = Peak_Middle_mL/rv$fraction_size, 
+          Fraction_End = Peak_End_mL/rv$fraction_size,
+          Fraction_sep = Fraction_Start - lag(Fraction_End)
         ) 
-      rv$sep <- data.frame(
-        "Peak_Start_mL" = rv$tlc_data$Vr - rv$tlc_data$bandsize/2,
-        "Peak_Middle_mL" = rv$tlc_data$Vr,
-        "Peak_End_mL" = rv$tlc_data$Vr + rv$tlc_data$bandsize/2
-      ) %>%
-        bind_cols(rv$sep, .)
-      #to-do: start middle end peak
-      if (!is.na(input$user_fraction_size)) {
-        rv$fraction_size <- case_when(input$user_fraction_size != 0 ~ input$user_fraction_size, .default = rv$Vm/3)
-      } else { rv$fraction_size <- rv$Vm/3 }
-      
-      rv$sep <- mutate(rv$sep, Fraction_Start = Peak_Start_mL/rv$fraction_size, 
-                       Fraction_Mid = Peak_Middle_mL/rv$fraction_size, 
-                       Fraction_End = Peak_End_mL/rv$fraction_size,
-                       Fraction_sep = Fraction_Start - lag(Fraction_End))
     }
     
   }) %>%
@@ -357,9 +355,7 @@ server <- function(input, output, session) {
   
   #Silica and Fraction Data output
   output$silica_warning <- renderText({
-    if(rv$less_than_still == TRUE){
-      c("Warning: Silica is below recommended amount!")
-    }else ""
+    if(rv$less_than_still == TRUE) "Warning: Silica is below recommended amount!"
   })
   
   output$user_frac <- renderText(rv$fraction_size)
