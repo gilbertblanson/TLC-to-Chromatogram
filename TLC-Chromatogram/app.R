@@ -149,7 +149,8 @@ ui <- fluidPage(
       card( card_header("Separation details"), tableOutput("resolution") ),
       #Gutter---------------------------------------------------------------------------------------------
       tags$div("This Shiny app is based off the work of J. D. Fair and C. M. Kormos, Journal of Chromatography A, 2008, 1211, 49–54.",tags$br(),
-               "Rf prediction algorithm is based off of P. Kręcisz, K. Czarnecka and P. Szymański, Journal of Chromatographic Science, 2022, 60, 472–477.",
+               "Rf prediction algorithm is based off of P. Kręcisz, K. Czarnecka and P. Szymański, Journal of Chromatographic Science, 2022, 60, 472–477.", tags$br(),
+               "Code and documentation can be found on ", tags$a("Github", href = "https://github.com/gilbertblanson/TLC-to-Chromatogram"),
                style = "font-size:10px;")
     )
     
@@ -165,60 +166,69 @@ server <- function(input, output, session) {
                                               "solvent_percent" = c(10, 10, 10, 15, 15, 15, 20, 20, 20),
                                               "Rf" = c(0.54, 0.23, 0.1, 0.64, 0.42, 0.17, 0.7, 0.56, 0.28) ),
                                 Xa = c(0.7, 0.1, 0.2),
-                                emp_Rf = c(0.54, 0.23, 0.1))
+                                emp_Rf = c(0.54, 0.23, 0.1),
+                                no_spots = 3
+  )
+  
   #update values
+  observe(priority = 10, {
+    req(input$no_spots)
+    pred_values$no_spots = input$no_spots
+  })
+  
   observe({
     req(input$data)
     pred_values$data = hot_to_r(input$data)
   })
+  
   observe({
     req(input$Xa)
     pred_values$Xa = as.vector(hot_to_r(input$Xa))
   })
   
   observe(label = "val_update", priority = 1, {
-    req(input$no_spots)
+    req(pred_values$no_spots)
     
     l_max <- max(as.numeric(levels(pred_values$data$spot)))
-    spot_diff <- input$no_spots - l_max
+    spot_diff <- pred_values$no_spots - l_max
     
     if (spot_diff > 0 ) {
       
       #increase levels of spot rows, emp_Rf, and Xa
-      levels(pred_values$data$spot) <-  1:input$no_spots
+      levels(pred_values$data$spot) <-  1:pred_values$no_spots
       pred_values$emp_Rf <-  append(pred_values$emp_Rf, rep(0.2, spot_diff))
       pred_values$Xa <-  append(pred_values$Xa, rep(0.5, spot_diff))
       
     } else if (spot_diff < 0 ) {
       #delete rows of larger spot no's, change levels of spot rows, emp_Rf, and Xa
-      pred_values$data <- filter(pred_values$data, as.numeric(spot) <= input$no_spots) %>%
+      pred_values$data <- filter(pred_values$data, as.numeric(spot) <= pred_values$no_spots) %>%
         droplevels()
-      levels(pred_values$data$spot) <-  1:input$no_spots
-      pred_values$emp_Rf <-  pred_values$emp_Rf[1:input$no_spots]
-      pred_values$Xa <-  pred_values$Xa[1:input$no_spots]
+      levels(pred_values$data$spot) <-  1:pred_values$no_spots
+      pred_values$emp_Rf <-  pred_values$emp_Rf[1:pred_values$no_spots]
+      pred_values$Xa <-  pred_values$Xa[1:pred_values$no_spots]
     }
-  })
+  }) %>% bindEvent(pred_values$no_spots)
   
   ##USER TLC DATA INPUT -- ISOCRATIC ---------------------------------------------------------------------------------------------
   
   # Make spot i slider update the value of Rf[i] using map
   observe({
-    map(1:input$no_spots, ~{
+    map(1:pred_values$no_spots, ~{
       observeEvent(input[[paste0("Spot ", .x)]], {
         pred_values$emp_Rf[.x] <- input[[paste0("Spot ", .x)]]
       })
     })
-  }) %>% bindEvent(input$no_spots)
+  }) %>% bindEvent(pred_values$no_spots)
   
   output$sliders <- renderUI({ 
     # First, create a list of sliders each with a different name
-    sliders <- map(1:input$no_spots, ~{
+    sliders <- map(1:pred_values$no_spots, ~{
       inputName <- paste0("Spot ", .x)
       sliderInput(inputName, inputName, min = 0, max = 1, value = pred_values$emp_Rf[.x])
     })
     # Create a tagList of sliders (this is important)
     do.call(tagList, sliders)
-  }) %>% bindEvent(input$no_spots)
+  }) %>% bindEvent(pred_values$no_spots)
   
   ##USER TLC DATA INPUT -- RF PREDICTION ---------------------------------------------------------------------------------------- 
   
@@ -242,21 +252,16 @@ server <- function(input, output, session) {
   
   #outputs & editable tables
   output$pred <- renderText({
-    if ( any(table(pred_values$data$spot) < 2) == TRUE ) {
-      validate("Error: each spot requires at least two data points")
-    }
-    c("Predicted Rf:", 
-      round(predicted_rf_values(), 2)
+    validate(
+      need( any(table(pred_values$data$spot) < 2) == FALSE, "Error: each spot requires at least two data points")
+    )
+    c("Predicted Rf:", round(predicted_rf_values(), 2)
     )
   })
   
-  output$Xa <-  renderRHandsontable({
-    rhandsontable(as.matrix(pred_values$Xa)%>%`colnames<-`("Mass Balance"))
-  })
+  output$Xa <- renderRHandsontable( rhandsontable(as.matrix(pred_values$Xa)%>%`colnames<-`("Mass Balance")) )
   
-  output$data <-  renderRHandsontable({
-    rhandsontable(pred_values$data) 
-  })
+  output$data <- renderRHandsontable( rhandsontable(pred_values$data) )
   
   
   #-----------------------------------------------------------------------------------------------------------------
@@ -277,6 +282,7 @@ server <- function(input, output, session) {
   #load Rf/Xa data into calculations
   observe({
     if (input$data_entry == "Empirical") {
+      req(length(pred_values$emp_Rf) == length(pred_values$Xa) )
       rv$tlc_data <- tibble("Rf" = pred_values$emp_Rf, "Xa" = pred_values$Xa)
     } else {
       req(predicted_rf_values())
@@ -365,8 +371,7 @@ server <- function(input, output, session) {
   #-----------------------------------------------------------------------------------------------------------
   #PLOTTING---------------------------------------------------------------------------------------------------
   output$tlc <- renderPlot({
-    no_spots <- nrow(rv$tlc_data)
-    tlc <- ggplot(data=rv$tlc_data, aes(x = rep(0, no_spots), y = Rf, colour = as.factor(1:no_spots) )) +
+    tlc <- ggplot(data=rv$tlc_data, aes(x = rep(0, pred_values$no_spots), y = Rf, colour = as.factor(1:pred_values$no_spots) )) +
       geom_point(size=5) +
       ylim(0,1) +
       scale_x_discrete(labels = NULL, breaks = NULL) +
