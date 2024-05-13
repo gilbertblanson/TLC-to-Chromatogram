@@ -8,10 +8,6 @@ An interactive ShinyApp that takes your TLC results and turns them into predicte
 
 You can access the app at [ansonc.shinyapps.io/TLC-Chromatogram/](ansonc.shinyapps.io/TLC-Chromatogram/). To run it locally, download the app.R and run it in RStudio.
 
-## License
-
-This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details
-
 ## Acknowledgments
 
 -   Justin Fair and Chad Kormos for their [original publication](https://doi.org/10.1016/j.chroma.2008.09.085) which this ShinyApp was based upon.
