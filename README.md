@@ -6,7 +6,7 @@ An interactive ShinyApp that takes your TLC results and turns them into predicte
 
 ## Getting Started
 
-You can access the app at [ansonc.shinyapps.io/TLC-Chromatogram/](ansonc.shinyapps.io/TLC-Chromatogram/). To run it locally, download the app.R and run it in RStudio.
+You can access the app on any device at [ansonc.shinyapps.io/TLC-Chromatogram/](ansonc.shinyapps.io/TLC-Chromatogram/). To run it locally, download the app.R and run it in RStudio.
 
 ## Acknowledgments
 
