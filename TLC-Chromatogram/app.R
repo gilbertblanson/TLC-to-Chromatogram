@@ -54,15 +54,14 @@ line_layer_add <- function(plot, funct, label){
 #regression function for predicted Rfs
 perform_regression <- function(data) {
   if(nrow(data) < 2) {
-    return(c(1, -0.0001)) #lol
+    return(c(1, 0.0001, 1)) #lol
   } else {
-    gsl_nls(Rf ~ (solvent_percent/phi_nought)^(-1/k), 
+    gsl_nls(Rf ~ (a + phi_nought * solvent_percent)^(m),  #According to Jandera's simplification of Snyder's model
             data, 
-            start = list(phi_nought = 8, k = -0.5),
+            start = list(phi_nought = 0.1, m = 0.5, a = 0.3),
             algorithm = "lm",
             control = list(scale = "levenberg"),
-            upper = list(k = 0),
-            lower = list(phi_nought = 0)) %>%
+            lower = list(phi_nought = 0, m = 0, a = 0)) %>%
       coef()
   }
 }
@@ -75,7 +74,8 @@ accordion_filters <- accordion(
     icon = bs_icon("menu-app"),
     selectInput("data_entry", "Rf values:", c("Empirical", "Predicted"), selected = "Empirical" ),
     numericInput("crude_mass", "Crude Mass (g)", 0.5, min = 0),
-    numericInput("no_spots", "Number of Spots", value = 3, min = 1, step = 1),
+    uiOutput("no_spots_ui"),
+    #numericInput("no_spots", "Number of Spots", value = 3, min = 1, step = 1),
     rHandsontableOutput("Xa"),
     conditionalPanel(
       condition = "input.data_entry == 'Empirical'",
@@ -83,7 +83,7 @@ accordion_filters <- accordion(
     ),
     conditionalPanel(
       condition = "input.data_entry == 'Predicted'",
-      sliderInput("chosen_solvent_percent", "Strong solvent %", 1, 100, 15, animate = animationOptions(interval = 800, loop = TRUE), post="%"),
+      sliderInput("chosen_solvent_percent", "Strong solvent %", 0, 100, 15, animate = animationOptions(interval = 800, loop = TRUE), post="%"),
       span("Spot data", tooltip(bs_icon("info-circle"),
                                 p("Input at least 2 Rf values for each spot. You can add/remove datapoints by right clicking and navigating the pop-up menu.")
       ) 
@@ -170,6 +170,13 @@ server <- function(input, output, session) {
                                 no_spots = 3
   )
   
+  # output$no_spots_ui <- renderUI({
+  #   switch(input$data_entry,
+  #          "Empirical" = numericInput("no_spots_emp", "Number of Spots", value = 3, min = 1, step = 1),
+  #          "Predicted" = numericInput("no_spots_pred", "Number of Spots", value = 3, min = 1, step = 1)
+  #          )
+  # })
+  
   #update values
   observe(priority = 10, {
     req(input$no_spots)
@@ -181,7 +188,7 @@ server <- function(input, output, session) {
     pred_values$data = hot_to_r(input$data)
   })
   
-  observe({
+  observe({ #separate the two processes and make selectnum updateval to whatever process it's dealing with, emp or pred
     req(input$Xa)
     pred_values$Xa = as.vector(hot_to_r(input$Xa))
   })
@@ -244,7 +251,7 @@ server <- function(input, output, session) {
   
   # Apply the function to each element of predict_data_coef
   predicted_rf_values <- reactive({
-    predicted_rf_values <- try(sapply(predict_data_coef(), function(x) (input$chosen_solvent_percent / x[[1]])^(-1/x[[2]])) )
+    predicted_rf_values <- try(sapply(predict_data_coef(), function(x) (x[[3]] + x[[1]]*input$chosen_solvent_percent)^x[[2]] ) )
     predicted_rf_values[predicted_rf_values > 1] <- 1
     predicted_rf_values[predicted_rf_values < 0] <- 0
     return(predicted_rf_values)
