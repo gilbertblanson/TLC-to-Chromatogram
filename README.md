@@ -11,5 +11,5 @@ You can access the app on any device at [ansonc.shinyapps.io/TLC-Chromatogram/](
 ## Acknowledgments
 
 -   Justin Fair and Chad Kormos for their [original publication](https://doi.org/10.1016/j.chroma.2008.09.085) which presented the theory this ShinyApp builds upon.
--   Pavel Jandera for his work on retention factors, and Paweł Kręcisz, Kamila Czarnecka, and Paweł Szymański for [their work](https://doi.org/10.1093/chromsci/bmab097) which translated that to TLC Rf values.
+-   Pavel Jandera for his work on retention factor prediction, and Paweł Kręcisz, Kamila Czarnecka, and Paweł Szymański for [their work](https://doi.org/10.1093/chromsci/bmab097) which provided the inspiration to translate that to Rf prediction.
 -   MKB for his assistance and guidance throughout the project.
