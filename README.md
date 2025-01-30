@@ -6,7 +6,7 @@ An interactive ShinyApp that takes your TLC results and turns them into predicte
 
 ## Getting Started
 
-You can access the app on any device at [ansonc.shinyapps.io/TLC-Chromatogram/](ansonc.shinyapps.io/TLC-Chromatogram/). To run it locally, download the app.R and run it in RStudio.
+You can access the app on any device at [ansonc.shinyapps.io/TLC-Chromatogram/](https://ansonc.shinyapps.io/TLC-Chromatogram/). To run it locally, download the app.R and run it in RStudio.
 
 Words of warning when using the program:
 -  This was specifically developed for manual flash columns using normal phase silica, 40–63 µm (230–400 mesh), 60 Å pore size, pH range of 6.5–7.5. The transference from a TLC Rf to a normal phase elution volume (V'r) uses an empirical correction constant that was determined by Justin Fair and Chad Kormos ([link](https://doi.org/10.1016/j.chroma.2008.09.085)). Commercial silica cartridges have different efficiencies and thus the observed V'r and bandwidth may differ.
